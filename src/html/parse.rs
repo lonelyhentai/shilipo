@@ -16,7 +16,7 @@ use tracing;
 
 pub type ParseHTMLRes<T, U> = IResult<T, U, VerboseError<T>>;
 
-pub static EMPTY_STR: &'static str = "";
+pub static EMPTY_STR: & str = "";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseHTMLSnippet<'a> {

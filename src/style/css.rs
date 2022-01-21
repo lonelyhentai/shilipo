@@ -8,7 +8,7 @@ use nom::bytes::complete::{
 use nom::character::complete::{multispace0, multispace1, none_of, one_of};
 use nom::combinator::{fail, opt, recognize};
 use nom::error::{context, VerboseError};
-use nom::multi::{many0, separated_list0, separated_list1, many1};
+use nom::multi::{many0, many1, separated_list0, separated_list1};
 use nom::number::complete::recognize_float;
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{AsChar, IResult};
@@ -87,11 +87,11 @@ pub enum CSSSelectorItem {
 }
 
 impl CSSSelectorItem {
-  pub fn is_simple (&self) -> bool {
-    match self {
-      Self::Class { .. } | Self::Id { .. } | Self::Tag { .. } | Self::All => true,
-      _ => false
-    }
+  pub fn is_simple(&self) -> bool {
+    matches!(
+      self,
+      Self::Class { .. } | Self::Id { .. } | Self::Tag { .. } | Self::All
+    )
   }
 }
 
@@ -99,11 +99,11 @@ pub type Specificity = (u32, u32, u32, u32);
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct CSSSelector {
-  items: Vec<CSSSelectorItem>
+  items: Vec<CSSSelectorItem>,
 }
 
 impl CSSSelector {
-  pub fn specificity (&self) -> Option<Specificity> {
+  pub fn specificity(&self) -> Option<Specificity> {
     if self.can_specificity() {
       let inline = 0u32;
       let mut id = 0u32;
@@ -111,9 +111,9 @@ impl CSSSelector {
       let mut tag = 0u32;
       for i in &self.items {
         match i {
-          &CSSSelectorItem::Id { .. } => id += 1,
-          &CSSSelectorItem::Tag { .. } => tag += 1,
-          &CSSSelectorItem::Class { .. } => class += 1,
+          CSSSelectorItem::Id { .. } => id += 1,
+          CSSSelectorItem::Tag { .. } => tag += 1,
+          CSSSelectorItem::Class { .. } => class += 1,
           _ => {}
         };
       }
@@ -123,11 +123,11 @@ impl CSSSelector {
     }
   }
 
-  pub fn is_simple (&self) -> bool {
+  pub fn is_simple(&self) -> bool {
     self.items.iter().all(|f| f.is_simple())
   }
 
-  pub fn can_specificity (&self) -> bool {
+  pub fn can_specificity(&self) -> bool {
     self.is_simple()
   }
 }
@@ -527,7 +527,7 @@ pub fn parse_semicolon_token(input: &str) -> ParseCSSRes<&str, CSSToken> {
   context("semicolon", tag(";"))(input).map(|(next_input, _)| (next_input, CSSToken::Semicolon))
 }
 
-pub fn parse_preserved_token<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSToken> {
+pub fn parse_preserved_token(input: &str) -> ParseCSSRes<&str, CSSToken> {
   context(
     "preserved token",
     alt((
@@ -655,7 +655,7 @@ pub fn parse_important<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSImportant>
   )(input)
 }
 
-pub fn parse_declaration<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSDeclaration> {
+pub fn parse_declaration(input: &str) -> ParseCSSRes<&str, CSSDeclaration> {
   context(
     "declaration",
     tuple((
@@ -683,55 +683,53 @@ pub fn parse_declaration<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSDeclarat
 pub fn parse_selector<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSSelector> {
   context(
     "select",
-    many1(
-      |seg: &'a str| {
-        alt((
-          |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
-            let (next_i1, r1) = parse_hash_token(i)?;
-            if let CSSToken::Hash { text: ident } = r1 {
-              Ok((next_i1, CSSSelectorItem::Id { text: ident }))
-            } else {
-              unreachable!()
-            }
-          },
-          |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
-            let (next_i1, r1) = preceded(tag("."), parse_ident_token)(i)?;
-            if let CSSToken::Ident { text: ident } = r1 {
-              Ok((next_i1, CSSSelectorItem::Class { text: ident }))
-            } else {
-              unreachable!()
-            }
-          },
-          |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
-            let (next_i1, r1) = parse_ident_token(i)?;
-            if let CSSToken::Ident { text: ident } = r1 {
-              Ok((next_i1, CSSSelectorItem::Tag { text: ident }))
-            } else {
-              unreachable!()
-            }
-          },
-          |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
-            let (next_i1, _) = tag("*")(i)?;
-            Ok((next_i1, CSSSelectorItem::All))
-          },
-          |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
-            let (next_i1, _) = multispace1(i)?;
-            Ok((next_i1, CSSSelectorItem::Whitespaces))
-          },
-          |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
-            let (next_i1, r1) = take_till1(|c: char| ",{".contains(c) || c.is_whitespace())(i)?;
-            Ok((next_i1, CSSSelectorItem::Unknown { text: r1.into() }))
-          },
-        ))(seg)
-      }
-    ),
+    many1(|seg: &'a str| {
+      alt((
+        |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
+          let (next_i1, r1) = parse_hash_token(i)?;
+          if let CSSToken::Hash { text: ident } = r1 {
+            Ok((next_i1, CSSSelectorItem::Id { text: ident }))
+          } else {
+            unreachable!()
+          }
+        },
+        |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
+          let (next_i1, r1) = preceded(tag("."), parse_ident_token)(i)?;
+          if let CSSToken::Ident { text: ident } = r1 {
+            Ok((next_i1, CSSSelectorItem::Class { text: ident }))
+          } else {
+            unreachable!()
+          }
+        },
+        |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
+          let (next_i1, r1) = parse_ident_token(i)?;
+          if let CSSToken::Ident { text: ident } = r1 {
+            Ok((next_i1, CSSSelectorItem::Tag { text: ident }))
+          } else {
+            unreachable!()
+          }
+        },
+        |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
+          let (next_i1, _) = tag("*")(i)?;
+          Ok((next_i1, CSSSelectorItem::All))
+        },
+        |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
+          let (next_i1, _) = multispace1(i)?;
+          Ok((next_i1, CSSSelectorItem::Whitespaces))
+        },
+        |i: &'a str| -> ParseCSSRes<&'a str, CSSSelectorItem> {
+          let (next_i1, r1) = take_till1(|c: char| ",{".contains(c) || c.is_whitespace())(i)?;
+          Ok((next_i1, CSSSelectorItem::Unknown { text: r1.into() }))
+        },
+      ))(seg)
+    }),
   )(input)
-    .map(|(next_input, mut result)| {
-      while let Some(CSSSelectorItem::Whitespaces) = result.last() {
-        result.pop();
-      };
-      (next_input, CSSSelector { items: result })
-    })
+  .map(|(next_input, mut result)| {
+    while let Some(CSSSelectorItem::Whitespaces) = result.last() {
+      result.pop();
+    }
+    (next_input, CSSSelector { items: result })
+  })
 }
 
 pub fn parse_selectors(input: &str) -> ParseCSSRes<&str, CSSSelectorList> {
@@ -825,7 +823,7 @@ pub fn parse_keyframe_rules(input: &str) -> ParseCSSRes<&str, CSSKeyframeRuleLis
   .map(|(next_input, result)| (next_input, CSSKeyframeRuleList { items: result }))
 }
 
-pub fn parse_at_rule_keyframes<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSAtRule> {
+pub fn parse_at_rule_keyframes(input: &str) -> ParseCSSRes<&str, CSSAtRule> {
   context(
     "keyframes",
     pair(
@@ -856,7 +854,7 @@ pub fn parse_at_rule_keyframes<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSAt
   })
 }
 
-pub fn parse_at_rule_font_face<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSAtRule> {
+pub fn parse_at_rule_font_face(input: &str) -> ParseCSSRes<&str, CSSAtRule> {
   context(
     "at rule font-face",
     preceded(
@@ -942,8 +940,7 @@ pub fn parse_declaration_list<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSDec
         |i: &'a str| -> ParseCSSRes<&'a str, CSSDeclarationList> {
           let (next_i1, r1) = parse_at_rule(i)?;
           let (next_i2, r2) = parse_declaration_list(next_i1)?;
-          let mut declaration_list = vec![];
-          declaration_list.push(CSSDeclarationListItem::AtRule(r1));
+          let mut declaration_list = vec![CSSDeclarationListItem::AtRule(r1)];
           declaration_list.extend(r2.items.into_iter());
           Ok((
             next_i2,
@@ -999,7 +996,7 @@ pub fn parse_stylesheet<'a>(input: &'a str) -> ParseCSSRes<&'a str, CSSStyleshee
       let mut items = vec![];
       let mut prev_i = i;
       loop {
-        if prev_i.len() == 0 {
+        if prev_i.is_empty() {
           break;
         }
         let (next_i, r) = parse_stylesheet_item(prev_i)?;
@@ -1205,13 +1202,13 @@ mod tests {
         selectors: CSSSelectorList {
           items: vec![
             CSSSelector {
-              items: vec![CSSSelectorItem::Tag { text: "tag".into() }]
+              items: vec![CSSSelectorItem::Tag { text: "tag".into() }],
             },
             CSSSelector {
               items: vec![CSSSelectorItem::Class {
                 text: "my-class".into(),
-              }]
-            }
+              }],
+            },
           ],
         },
         declaration_list: CSSDeclarationList {
@@ -1249,9 +1246,9 @@ mod tests {
     use super::CSSDeclarationListItem::*;
     use super::CSSQualifiedRule::*;
     use super::CSSSelectorItem::*;
+    use super::CSSStylesheetItem::Whitespaces;
     use super::CSSStylesheetItem::*;
     use super::CSSToken::*;
-    use super::CSSStylesheetItem::Whitespaces;
     let css_content = r#"
       tag.my-class1, .my-class {
         width: 100%;
@@ -1288,16 +1285,16 @@ mod tests {
                 CSSSelector {
                   items: vec![
                     Tag { text: "tag".into() },
-                    Class { text: "my-class1".into() }
-                  ]
+                    Class {
+                      text: "my-class1".into(),
+                    },
+                  ],
                 },
                 CSSSelector {
-                  items: vec![
-                    Class {
-                      text: "my-class".into(),
-                    }
-                  ]
-                }
+                  items: vec![Class {
+                    text: "my-class".into(),
+                  }],
+                },
               ],
             },
             declaration_list: CSSDeclarationList {
@@ -1327,15 +1324,11 @@ mod tests {
           Whitespaces,
           QualifiedRule(Selectors(CSSQualifiedRuleSelectors {
             selectors: CSSSelectorList {
-              items: vec![
-                CSSSelector {
-                  items: vec![
-                    Id {
-                      text: "name".into(),
-                    }
-                  ]
-                }
-              ],
+              items: vec![CSSSelector {
+                items: vec![Id {
+                  text: "name".into(),
+                }],
+              }],
             },
             declaration_list: CSSDeclarationList {
               items: vec![
