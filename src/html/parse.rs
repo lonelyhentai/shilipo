@@ -3,8 +3,9 @@
  */
 use crate::html::dom::{ElementData, Node as DomNode, NodeType as DomNodeType};
 use nom::branch::alt;
-use nom::bytes::complete::{escaped, tag, take_till, take_until, take_while_m_n};
-use nom::bytes::streaming::{tag_no_case, take_till1};
+use nom::bytes::complete::{
+  escaped, tag, tag_no_case, take_till, take_till1, take_until, take_while_m_n,
+};
 use nom::character::complete::{alphanumeric1, multispace0, multispace1};
 use nom::combinator::{fail, map, opt, peek};
 use nom::error::{context, ErrorKind, VerboseError, VerboseErrorKind};
@@ -13,10 +14,12 @@ use nom::sequence::{delimited, preceded, separated_pair, tuple};
 use nom::{AsChar, Err as NomErr, IResult};
 use std::collections::{HashMap, VecDeque};
 use tracing;
+use std::cell::RefCell;
+use std::sync::Arc;
 
 pub type ParseHTMLRes<T, U> = IResult<T, U, VerboseError<T>>;
 
-pub static EMPTY_STR: & str = "";
+pub static EMPTY_STR: &str = "";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseHTMLSnippet<'a> {
@@ -247,7 +250,7 @@ pub fn parse_elem_end_tag(input: &str) -> ParseHTMLRes<&str, ParseHTMLSnippet> {
 }
 
 pub fn parse_text(input: &str) -> ParseHTMLRes<&str, ParseHTMLSnippet> {
-  context("text line ending", take_till1(|c: char| "<>".contains(c)))(input)
+  context("text", take_till1(|c: char| "<>".contains(c)))(input)
     .map(|(next_input, result)| (next_input, ParseHTMLSnippet::Text { text: result }))
 }
 
@@ -306,17 +309,17 @@ pub fn parse_snippet(input: &str) -> ParseHTMLRes<&str, ParseHTMLSnippet> {
       parse_elem_start_tag_opening,
       parse_elem_start_tag_closing,
       parse_elem_end_tag,
-      parse_text,
       parse_comment_tag,
       parse_doctype_tag,
       parse_cdata_tag,
+      parse_text,
       fail,
     )),
   )(input)
 }
 
 #[tracing::instrument]
-pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
+pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Option<Arc<RefCell<DomNode>>>> {
   context("html", |i: &'a str| {
     let mut nodes = VecDeque::<ParseHTMLNode>::new();
     let mut prev_input = i;
@@ -341,7 +344,7 @@ pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
               vec![],
             );
             if let Some(ParseHTMLNode::Opening(prev_node)) = nodes.back_mut() {
-              prev_node.children.push(next_dom_node)
+              prev_node.append_node(next_dom_node)
             } else {
               nodes.push_back(ParseHTMLNode::Closing(next_dom_node))
             }
@@ -391,7 +394,7 @@ pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
               }));
             };
             if let Some(ParseHTMLNode::Opening(prev_node)) = nodes.back_mut() {
-              prev_node.children.push(next_dom_node)
+              prev_node.append_node(next_dom_node)
             } else {
               nodes.push_back(ParseHTMLNode::Closing(next_dom_node))
             }
@@ -399,7 +402,7 @@ pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
           Text { text } => {
             let next_node = DomNode::text(text);
             if let Some(ParseHTMLNode::Opening(prev_node)) = nodes.back_mut() {
-              prev_node.children.push(next_node)
+              prev_node.append_node(next_node)
             } else {
               nodes.push_back(ParseHTMLNode::Closing(next_node))
             }
@@ -407,7 +410,7 @@ pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
           CommentTag { text } => {
             let next_node = DomNode::comment(text);
             if let Some(ParseHTMLNode::Opening(prev_node)) = nodes.back_mut() {
-              prev_node.children.push(next_node)
+              prev_node.append_node(next_node)
             } else {
               nodes.push_back(ParseHTMLNode::Closing(next_node))
             }
@@ -415,7 +418,7 @@ pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
           CDataTag { text } => {
             let next_node = DomNode::cdata(text);
             if let Some(ParseHTMLNode::Opening(prev_node)) = nodes.back_mut() {
-              prev_node.children.push(next_node)
+              prev_node.append_node(next_node)
             } else {
               nodes.push_back(ParseHTMLNode::Closing(next_node))
             }
@@ -423,7 +426,7 @@ pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
           DocTypeTag { legacy_compact } => {
             let next_node = DomNode::doctype(legacy_compact);
             if let Some(ParseHTMLNode::Opening(prev_node)) = nodes.back_mut() {
-              prev_node.children.push(next_node)
+              prev_node.append_node(next_node)
             } else {
               nodes.push_back(ParseHTMLNode::Closing(next_node))
             }
@@ -446,7 +449,16 @@ pub fn parse_html<'a>(input: &'a str) -> ParseHTMLRes<&'a str, Vec<DomNode>> {
         }));
       }
     }
-    Ok((prev_input, res))
+    let node = res
+      .iter()
+      .find(|n| match n.node_type {
+        DomNodeType::Element(ElementData { ref tag_name, .. }) => tag_name == "html",
+        _ => false,
+      })
+      .cloned()
+      .map(|n| Arc::new(RefCell::new(n)));
+
+    Ok((prev_input, node))
   })(input)
 }
 
@@ -463,46 +475,48 @@ mod tests {
     {
       let expect = Ok((
         "",
-        vec![Node::elem(
-          "html",
-          hashmap! {},
-          vec![
-            Node::text("\n"),
-            Node::elem(
-              "head",
-              hashmap! {},
-              vec![
-                Node::text("\n  "),
-                Node::elem(
-                  "meta",
-                  hashmap! {"charset".into() => "utf-8".into()},
-                  vec![],
-                ),
-                Node::text("\n  "),
-                Node::elem(
-                  "title",
-                  hashmap! {},
-                  vec![Node::text("\n    github.com\n  ")],
-                ),
-                Node::text("\n"),
-              ],
-            ),
-            Node::text("\n"),
-            Node::elem(
-              "body",
-              hashmap! {},
-              vec![
-                Node::text("\n  "),
-                Node::elem("h1", hashmap! {}, vec![Node::text("我的第一个标题")]),
-                Node::text("\n  "),
-                Node::elem("p", hashmap! {}, vec![Node::text("我的第一个段落。")]),
-                Node::text("\n"),
-              ],
-            ),
-            Node::text("\n"),
-          ],
-        )],
-      ));
+        Some(Arc::new(RefCell::new(
+          Node::elem(
+            "html",
+            hashmap! {},
+            vec![
+              Node::text("\n"),
+              Node::elem(
+                "head",
+                hashmap! {},
+                vec![
+                  Node::text("\n  "),
+                  Node::elem(
+                    "meta",
+                    hashmap! {"charset".into() => "utf-8".into()},
+                    vec![],
+                  ),
+                  Node::text("\n  "),
+                  Node::elem(
+                    "title",
+                    hashmap! {},
+                    vec![Node::text("\n    github.com\n  ")],
+                  ),
+                  Node::text("\n"),
+                ],
+              ),
+              Node::text("\n"),
+              Node::elem(
+                "body",
+                hashmap! {},
+                vec![
+                  Node::text("\n  "),
+                  Node::elem("h1", hashmap! {}, vec![Node::text("我的第一个标题")]),
+                  Node::text("\n  "),
+                  Node::elem("p", hashmap! {}, vec![Node::text("我的第一个段落。")]),
+                  Node::text("\n"),
+                ],
+              ),
+              Node::text("\n"),
+            ],
+          )),
+        )
+        )));
       let found = parse_html(
         r#"<html>
 <head>
@@ -523,10 +537,7 @@ mod tests {
     {
       let expect = Ok((
         "",
-        vec![
-          Node::text("\n"),
-          Node::doctype(true),
-          Node::text("\n"),
+        Some(Arc::new(RefCell::new(
           Node::elem(
             "html",
             hashmap! {},
@@ -569,9 +580,9 @@ mod tests {
               ),
               Node::text("\n"),
             ],
-          ),
-        ],
-      ));
+          )),
+        )
+        )));
       let found = parse_html(
         r#"
 <!DOCTYPE html SYSTEM "about:legacy-compat">

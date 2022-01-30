@@ -12,231 +12,36 @@ use nom::multi::{many0, many1, separated_list0, separated_list1};
 use nom::number::complete::recognize_float;
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{AsChar, IResult};
+use crate::css::cssom::{ 
+  CSSToken,
+  CSSComponentValue,
+  CSSFunctionBlock,
+  CSSCurlyBracesBlock,
+  CSSRoundBracesBlock,
+  CSSSquareBracesBlock,
+  CSSImportant,
+  CSSDeclaration,
+  CSSSelectorItem,
+  CSSSelector,
+  CSSSelectorList,
+  CSSAtRuleKeyframes,
+  CSSQualifiedRuleUnknown,
+  CSSQualifiedRule,
+  CSSAtRuleFontFace,
+  CSSAtRule,
+  CSSRuleList,
+  CSSRuleListItem,
+  CSSKeyframeRule,
+  CSSKeyframeRuleList,
+  CSSDeclarationList,
+  CSSDeclarationListItem,
+  CSSStylesheet,
+  CSSStylesheetItem,
+  CSSQualifiedRuleSelectors,
+  CSSAtRuleUnknown
+};
 
 pub type ParseCSSRes<T, U> = IResult<T, U, VerboseError<T>>;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSToken {
-  Comment { text: String },
-  Ident { text: String },
-  Function { text: String },
-  AtKeyword { text: String },
-  Hash { text: String },
-  String { text: String },
-  Url { text: String },
-  Number { number: String },
-  Dimension { number: String, text: String },
-  Percentage { number: String },
-  Delim { text: String },
-  Semicolon,
-  Comma,
-  Cdo,
-  Cdc,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSComponentValue {
-  FunctionBlock(CSSFunctionBlock),
-  CurlyBracesBlock(CSSCurlyBracesBlock),
-  RoundBracesBlock(CSSRoundBracesBlock),
-  SquareBracesBlock(CSSSquareBracesBlock),
-  PreservedToken(CSSToken),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSFunctionBlock {
-  pub function_name: String,
-  pub components: Vec<CSSComponentValue>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSCurlyBracesBlock {
-  pub components: Vec<CSSComponentValue>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSRoundBracesBlock {
-  pub components: Vec<CSSComponentValue>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSSquareBracesBlock {
-  pub components: Vec<CSSComponentValue>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSImportant {
-  pub is_important: bool,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSDeclaration {
-  pub ident: String,
-  pub components: Vec<CSSComponentValue>,
-  pub important: CSSImportant,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSSelectorItem {
-  Class { text: String },
-  Id { text: String },
-  Tag { text: String },
-  All,
-  Whitespaces,
-  Unknown { text: String },
-}
-
-impl CSSSelectorItem {
-  pub fn is_simple(&self) -> bool {
-    matches!(
-      self,
-      Self::Class { .. } | Self::Id { .. } | Self::Tag { .. } | Self::All
-    )
-  }
-}
-
-pub type Specificity = (u32, u32, u32, u32);
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSSelector {
-  items: Vec<CSSSelectorItem>,
-}
-
-impl CSSSelector {
-  pub fn specificity(&self) -> Option<Specificity> {
-    if self.can_specificity() {
-      let inline = 0u32;
-      let mut id = 0u32;
-      let mut class = 0u32;
-      let mut tag = 0u32;
-      for i in &self.items {
-        match i {
-          CSSSelectorItem::Id { .. } => id += 1,
-          CSSSelectorItem::Tag { .. } => tag += 1,
-          CSSSelectorItem::Class { .. } => class += 1,
-          _ => {}
-        };
-      }
-      Some((inline, id, class, tag))
-    } else {
-      None
-    }
-  }
-
-  pub fn is_simple(&self) -> bool {
-    self.items.iter().all(|f| f.is_simple())
-  }
-
-  pub fn can_specificity(&self) -> bool {
-    self.is_simple()
-  }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSSelectorList {
-  items: Vec<CSSSelector>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSQualifiedRuleSelectors {
-  pub selectors: CSSSelectorList,
-  pub declaration_list: CSSDeclarationList,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSQualifiedRuleUnknown {
-  pub components: Vec<CSSComponentValue>,
-  pub block: CSSCurlyBracesBlock,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSQualifiedRule {
-  Selectors(CSSQualifiedRuleSelectors),
-  Unknown(CSSQualifiedRuleUnknown),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSAtRuleFontFace {
-  pub declaration_list: CSSDeclarationList,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSAtRuleKeyframes {
-  pub keyframes_name: String,
-  pub keyframes: CSSKeyframeRuleList,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSAtRuleUnknown {
-  pub at_keyword: String,
-  pub components: Vec<CSSComponentValue>,
-  pub block: Option<CSSCurlyBracesBlock>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSAtRule {
-  FontFace(CSSAtRuleFontFace),
-  Keyframes(CSSAtRuleKeyframes),
-  Unknown(CSSAtRuleUnknown),
-  /* not implement
-  // Import
-  // Media,
-  // FontFeatureValues,
-  // CountStyle
-  // Document
-  // Page
-  // Namespace
-  // Viewport
-   **/
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSRuleList {
-  pub items: Vec<CSSRuleListItem>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSRuleListItem {
-  AtRule(CSSAtRule),
-  QualifiedRule(CSSQualifiedRule),
-  Whitespaces,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSKeyframeRule {
-  pub selectors: Vec<CSSToken>,
-  pub declaration_list: CSSDeclarationList,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSKeyframeRuleList {
-  pub items: Vec<CSSKeyframeRule>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSDeclarationList {
-  pub items: Vec<CSSDeclarationListItem>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSDeclarationListItem {
-  AtRule(CSSAtRule),
-  Declaration(CSSDeclaration),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CSSStylesheet {
-  pub items: Vec<CSSStylesheetItem>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum CSSStylesheetItem {
-  Whitespaces,
-  QualifiedRule(CSSQualifiedRule),
-  AtRule(CSSAtRule),
-  Cdo,
-  Cdc,
-}
 
 pub fn parse_normal_escapable(input: &str) -> ParseCSSRes<&str, &str> {
   alt((
